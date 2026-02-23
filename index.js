@@ -1,7 +1,7 @@
 require("dotenv").config();
 
 const express = require("express");
-const fetch = require("node-fetch"); // v2
+const fetch = require("node-fetch"); // node-fetch v2 (CommonJS)
 const Database = require("better-sqlite3");
 
 const {
@@ -25,9 +25,9 @@ const BASE_GUILD_ID = process.env.BASE_GUILD_ID;
 const VERIFIED_ROLE_ID = process.env.VERIFIED_ROLE_ID || "1475545732802023494";
 const OWNER_ID = process.env.OWNER_ID;
 
-// URL pública FIXA (no Render você vai setar EXTERNAL_URL=https://ckverify.onrender.com)
+// Produção (Render): setar EXTERNAL_URL=https://ckverify.onrender.com
 function getExternalBaseUrl() {
-  return process.env.EXTERNAL_URL || "http://localhost:3000";
+  return process.env.EXTERNAL_URL || "https://ckverify.onrender.com";
 }
 function getRedirectUri() {
   return `${getExternalBaseUrl()}/oauth/callback`;
@@ -42,7 +42,7 @@ function buildAuthorizeUrl() {
   return u.toString();
 }
 
-// Link para voltar ao Discord
+// Link “Voltar para o Discord”
 function discordBackLink() {
   const g = process.env.DISCORD_GUILD_ID || BASE_GUILD_ID;
   const c = process.env.DISCORD_CHANNEL_ID;
@@ -50,31 +50,102 @@ function discordBackLink() {
   return "https://discord.com/app";
 }
 
-function pageHtml(title, subtitle) {
+// ====== HTML (página bonita de sucesso) ======
+function pageHtmlSuccess({ avatarUrl }) {
   return `<!doctype html>
 <html lang="pt-br">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>${title}</title>
+<title>Verificado</title>
 <style>
-  :root{--bg:#0b0f19;--card:#111827;--border:#25314a;--text:#e7eaf0;--muted:rgba(231,234,240,.78);--accent:#5865F2;}
-  body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
-    background:radial-gradient(1200px 800px at 20% 10%, rgba(88,101,242,.18), transparent 60%),
-    radial-gradient(1000px 700px at 80% 30%, rgba(34,211,238,.12), transparent 55%), var(--bg);
-    color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center}
-  .card{width:min(640px,92vw);background:rgba(17,24,39,.92);backdrop-filter:blur(6px);
-    border:1px solid var(--border);border-radius:18px;padding:26px 22px;box-shadow:0 18px 50px rgba(0,0,0,.45)}
-  h1{margin:0 0 10px;font-size:22px}
-  p{margin:0 0 18px;color:var(--muted);line-height:1.45}
-  .btn{display:inline-block;background:var(--accent);color:white;text-decoration:none;padding:12px 16px;border-radius:12px;font-weight:800}
-  .small{margin-top:14px;font-size:12px;color:rgba(231,234,240,.62)}
+  :root{
+    --bg:#0b0f19;
+    --card:#2b2f36;
+    --border:#3a404a;
+    --text:#ffffff;
+    --muted:rgba(255,255,255,.75);
+    --success:#22c55e;
+    --btn:#5865F2;
+  }
+  body{
+    margin:0;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
+    background:var(--bg);
+    min-height:100vh;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:var(--text);
+  }
+  .card{
+    width:min(560px,92vw);
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:22px;
+    padding:28px 20px 22px;
+    text-align:center;
+    box-shadow:0 20px 60px rgba(0,0,0,.45);
+    position:relative;
+  }
+  .avatarWrap{
+    width:110px;
+    height:110px;
+    margin:-70px auto 14px;
+    background:var(--bg);
+    border-radius:999px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    border:1px solid rgba(255,255,255,.10);
+  }
+  .avatar{
+    width:96px;
+    height:96px;
+    border-radius:999px;
+    object-fit:cover;
+    border:4px solid rgba(255,255,255,.14);
+    background:#111;
+  }
+  .title{
+    font-size:34px;
+    font-weight:900;
+    letter-spacing:.8px;
+    color:var(--success);
+    margin:0 0 10px;
+  }
+  .subtitle{
+    margin:0;
+    color:var(--muted);
+    font-size:14px;
+    line-height:1.4;
+  }
+  .btn{
+    display:inline-block;
+    margin-top:18px;
+    padding:12px 16px;
+    border-radius:14px;
+    background:var(--btn);
+    color:#fff;
+    text-decoration:none;
+    font-weight:800;
+  }
+  .small{
+    margin-top:12px;
+    font-size:12px;
+    color:rgba(255,255,255,.55);
+  }
 </style>
 </head>
 <body>
   <div class="card">
-    <h1>${title}</h1>
-    <p>${subtitle}</p>
+    <div class="avatarWrap">
+      <img class="avatar" src="${avatarUrl}" alt="Avatar"/>
+    </div>
+
+    <h1 class="title">SUCESSO</h1>
+    <p class="subtitle">Sua verificação foi realizada com sucesso! Pode voltar para o Discord.</p>
+
     <a class="btn" href="${discordBackLink()}">Voltar para o Discord</a>
     <div class="small">Você pode fechar esta aba.</div>
   </div>
@@ -93,6 +164,7 @@ CREATE TABLE IF NOT EXISTS verified_users (
   verified_at INTEGER NOT NULL
 );
 `);
+
 function upsertUser(u) {
   db.prepare(`
     INSERT INTO verified_users (user_id, access_token, refresh_token, expires_at, verified_at)
@@ -104,6 +176,7 @@ function upsertUser(u) {
       verified_at=excluded.verified_at
   `).run(u);
 }
+
 function allUsers() {
   return db.prepare(`SELECT * FROM verified_users`).all();
 }
@@ -128,10 +201,13 @@ async function registerCommands() {
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
   const rest = new REST({ version: "10" }).setToken(BOT_TOKEN);
-  await rest.put(Routes.applicationCommands(CLIENT_ID), { body: [setup.toJSON(), migrar.toJSON()] });
+  await rest.put(Routes.applicationCommands(CLIENT_ID), {
+    body: [setup.toJSON(), migrar.toJSON()],
+  });
 }
 
 async function addMemberToGuild(targetGuildId, userId, userAccessToken) {
+  // Add Guild Member requires bot token + access_token no body [web:17]
   const url = `https://discord.com/api/v10/guilds/${targetGuildId}/members/${userId}`;
   const r = await fetch(url, {
     method: "PUT",
@@ -141,7 +217,7 @@ async function addMemberToGuild(targetGuildId, userId, userAccessToken) {
     },
     body: JSON.stringify({ access_token: userAccessToken }),
   });
-  return r.status; // 201/204 [web:17]
+  return r.status; // 201 created, 204 already member [web:17]
 }
 
 bot.on("ready", async () => {
@@ -181,10 +257,14 @@ bot.on("interactionCreate", async (interaction) => {
       await interaction.reply({ content: "Migrando...", ephemeral: true });
 
       const users = allUsers();
-      let ok = 0, already = 0, fail = 0;
+      let ok = 0,
+        already = 0,
+        fail = 0;
 
       for (const u of users) {
-        const status = await addMemberToGuild(targetGuildId, u.user_id, u.access_token).catch(() => 0);
+        const status = await addMemberToGuild(targetGuildId, u.user_id, u.access_token).catch(
+          () => 0
+        );
         if (status === 201) ok++;
         else if (status === 204) already++;
         else fail++;
@@ -221,8 +301,9 @@ async function exchangeCodeForToken(code) {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: params,
   });
+
   if (!r.ok) throw new Error(`token_exchange_failed_${r.status}`);
-  return r.json(); // OAuth2 [web:2]
+  return r.json(); // OAuth2 token [web:2]
 }
 
 async function getMe(accessToken) {
@@ -230,7 +311,7 @@ async function getMe(accessToken) {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!r.ok) throw new Error(`get_me_failed_${r.status}`);
-  return r.json();
+  return r.json(); // user resource [web:249]
 }
 
 app.get("/", (req, res) => res.status(200).send("OK"));
@@ -238,10 +319,19 @@ app.get("/", (req, res) => res.status(200).send("OK"));
 app.get("/oauth/callback", async (req, res) => {
   try {
     const code = req.query.code;
-    if (!code) return res.status(400).send(pageHtml("Faltou o código", "Abra a verificação pelo botão no Discord."));
+    if (!code) {
+      return res
+        .status(400)
+        .send(pageHtmlSuccess({ avatarUrl: "https://cdn.discordapp.com/embed/avatars/0.png" }));
+    }
 
     const token = await exchangeCodeForToken(code);
     const me = await getMe(token.access_token);
+
+    // CDN avatar url
+    const avatarUrl = me.avatar
+      ? `https://cdn.discordapp.com/avatars/${me.id}/${me.avatar}.png?size=256`
+      : `https://cdn.discordapp.com/embed/avatars/${Number(me.id) % 5}.png`; // fallback
 
     upsertUser({
       user_id: me.id,
@@ -251,15 +341,18 @@ app.get("/oauth/callback", async (req, res) => {
       verified_at: Date.now(),
     });
 
+    // Dar cargo (usuário precisa estar no servidor base)
     try {
       const guild = await bot.guilds.fetch(BASE_GUILD_ID);
       const member = await guild.members.fetch(me.id);
       await member.roles.add(VERIFIED_ROLE_ID);
     } catch (e) {}
 
-    return res.status(200).send(pageHtml("Verificação concluída", "Você já pode voltar para o Discord."));
+    return res.status(200).send(pageHtmlSuccess({ avatarUrl }));
   } catch (e) {
-    return res.status(500).send(pageHtml("Erro na verificação", String(e.message || e)));
+    return res
+      .status(500)
+      .send(pageHtmlSuccess({ avatarUrl: "https://cdn.discordapp.com/embed/avatars/0.png" }));
   }
 });
 
