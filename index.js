@@ -27,7 +27,7 @@ const OWNER_ID = process.env.OWNER_ID;
 
 // Produção (Render): setar EXTERNAL_URL=https://ckverify.onrender.com
 function getExternalBaseUrl() {
-  return process.env.EXTERNAL_URL || "https://ckverify.onrender.com";
+  return process.env.EXTERNAL_URL || "http://localhost:3000";
 }
 function getRedirectUri() {
   return `${getExternalBaseUrl()}/oauth/callback`;
