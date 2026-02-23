@@ -14,6 +14,7 @@ const {
   Routes,
   SlashCommandBuilder,
   PermissionFlagsBits,
+  EmbedBuilder,
 } = require("discord.js");
 
 // ====== ENV ======
@@ -25,7 +26,7 @@ const BASE_GUILD_ID = process.env.BASE_GUILD_ID;
 const VERIFIED_ROLE_ID = process.env.VERIFIED_ROLE_ID || "1475545732802023494";
 const OWNER_ID = process.env.OWNER_ID;
 
-// Produção (Render): setar EXTERNAL_URL=https://ckverify.onrender.com
+// Produção (Render): EXTERNAL_URL=https://ckverify.onrender.com
 function getExternalBaseUrl() {
   return process.env.EXTERNAL_URL || "http://localhost:3000";
 }
@@ -86,7 +87,6 @@ function pageHtmlSuccess({ avatarUrl }) {
     padding:28px 20px 22px;
     text-align:center;
     box-shadow:0 20px 60px rgba(0,0,0,.45);
-    position:relative;
   }
   .avatarWrap{
     width:110px;
@@ -183,31 +183,63 @@ function allUsers() {
 
 // ====== BOT ======
 const bot = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildPresences, // precisa habilitar no portal [web:171]
+  ],
 });
+
+function ownerOnly(interaction) {
+  if (OWNER_ID && interaction.user.id !== OWNER_ID) return true;
+  return false;
+}
 
 async function registerCommands() {
   const setup = new SlashCommandBuilder()
     .setName("setupverificar")
-    .setDescription("Envia a mensagem com botão de verificação (link) neste canal")
+    .setDescription("Envia a mensagem (embed) com botão de verificação (link) neste canal")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+
+  const estatisticas = new SlashCommandBuilder()
+    .setName("estatisticas")
+    .setDescription("Mostra quantos verificados existem e seus status")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
   const migrar = new SlashCommandBuilder()
     .setName("migrar")
-    .setDescription("Adiciona todos verificados no servidor destino (ID)")
+    .setDescription("Migra verificados para um servidor por status e quantidade")
     .addStringOption((o) =>
       o.setName("servidor_id").setDescription("ID do servidor destino").setRequired(true)
+    )
+    .addStringOption((o) =>
+      o.setName("status")
+        .setDescription("Quem migrar")
+        .setRequired(true)
+        .addChoices(
+          { name: "TODOS", value: "TODOS" },
+          { name: "ONLINE", value: "ONLINE" },
+          { name: "AUSENTE", value: "AUSENTE" },
+          { name: "OCUPADO", value: "OCUPADO" },
+          { name: "OFFLINE", value: "OFFLINE" }
+        )
+    )
+    .addIntegerOption((o) =>
+      o.setName("quantidade")
+        .setDescription("Quantidade máxima")
+        .setRequired(true)
+        .setMinValue(1)
+        .setMaxValue(1000)
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
   const rest = new REST({ version: "10" }).setToken(BOT_TOKEN);
   await rest.put(Routes.applicationCommands(CLIENT_ID), {
-    body: [setup.toJSON(), migrar.toJSON()],
+    body: [setup.toJSON(), migrar.toJSON(), estatisticas.toJSON()],
   });
 }
 
 async function addMemberToGuild(targetGuildId, userId, userAccessToken) {
-  // Add Guild Member requires bot token + access_token no body [web:17]
   const url = `https://discord.com/api/v10/guilds/${targetGuildId}/members/${userId}`;
   const r = await fetch(url, {
     method: "PUT",
@@ -218,6 +250,15 @@ async function addMemberToGuild(targetGuildId, userId, userAccessToken) {
     body: JSON.stringify({ access_token: userAccessToken }),
   });
   return r.status; // 201 created, 204 already member [web:17]
+}
+
+function normalizePickToPresence(statusPick) {
+  // PresenceStatus: online | idle | dnd | offline [web:309]
+  if (statusPick === "ONLINE") return "online";
+  if (statusPick === "AUSENTE") return "idle";
+  if (statusPick === "OCUPADO") return "dnd";
+  if (statusPick === "OFFLINE") return "offline";
+  return null;
 }
 
 bot.on("ready", async () => {
@@ -232,11 +273,29 @@ bot.on("interactionCreate", async (interaction) => {
   try {
     if (!interaction.isChatInputCommand()) return;
 
-    if (OWNER_ID && interaction.user.id !== OWNER_ID) {
+    // Dono-only para /migrar e /estatisticas
+    if ((interaction.commandName === "migrar" || interaction.commandName === "estatisticas") && ownerOnly(interaction)) {
       return interaction.reply({ content: "Sem permissão.", ephemeral: true });
     }
 
+    // /setupverificar pode ficar para admins (e opcionalmente dono-only)
     if (interaction.commandName === "setupverificar") {
+      const embed = new EmbedBuilder()
+        .setColor(0x22C55E)
+        .setTitle("Verificação de Conta")
+        .setDescription(
+          [
+            "Para concluir sua verificação, clique no botão abaixo e autorize o acesso solicitado.",
+            "",
+            "**Após autorizar:**",
+            "• Você receberá o cargo de verificado automaticamente.",
+            "• Seu acesso ficará liberado para migração quando o dono usar `/migrar`.",
+            "",
+            "_Se o cargo não aparecer em até 1 minuto, tente novamente ou contate um administrador._",
+          ].join("\n")
+        )
+        .setFooter({ text: "Sistema de verificação • ckverify" });
+
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setLabel("Verificar-se")
@@ -245,28 +304,86 @@ bot.on("interactionCreate", async (interaction) => {
       );
 
       await interaction.channel.send({
-        content: "Clique no botão abaixo para verificar:",
+        embeds: [embed],
         components: [row],
       });
 
-      return interaction.reply({ content: "Mensagem enviada.", ephemeral: true });
+      return interaction.reply({ content: "Mensagem de verificação enviada.", ephemeral: true });
+    }
+
+    if (interaction.commandName === "estatisticas") {
+      await interaction.reply({ content: "Calculando...", ephemeral: true });
+
+      const verified = allUsers();
+      const verifiedIds = new Set(verified.map((v) => v.user_id));
+
+      const guild = await bot.guilds.fetch(BASE_GUILD_ID);
+      const members = await guild.members.fetch({ withPresences: true });
+
+      let online = 0, idle = 0, dnd = 0, offline = 0;
+
+      for (const [id, member] of members) {
+        if (!verifiedIds.has(id)) continue;
+
+        const st = member.presence?.status ?? "offline";
+        if (st === "online") online++;
+        else if (st === "idle") idle++;
+        else if (st === "dnd") dnd++;
+        else offline++;
+      }
+
+      const embed = new EmbedBuilder()
+        .setColor(0x22C55E)
+        .setTitle("Estatísticas de Verificação")
+        .setDescription(
+          [
+            `**Total verificados:** ${verified.length}`,
+            "",
+            `🟢 **Online:** ${online}`,
+            `🟡 **Ausentes:** ${idle}`,
+            `🔴 **Ocupados:** ${dnd}`,
+            `⚫ **Offlines:** ${offline}`,
+          ].join("\n")
+        )
+        .setFooter({ text: "Dados do servidor base" });
+
+      return interaction.editReply({ content: "", embeds: [embed] });
     }
 
     if (interaction.commandName === "migrar") {
       const targetGuildId = interaction.options.getString("servidor_id", true);
-      await interaction.reply({ content: "Migrando...", ephemeral: true });
+      const statusPick = interaction.options.getString("status", true); // TODOS/ONLINE/AUSENTE/OCUPADO/OFFLINE
+      const limit = interaction.options.getInteger("quantidade", true);
 
-      const users = allUsers();
-      let ok = 0,
-        already = 0,
-        fail = 0;
+      await interaction.reply({ content: "Preparando lista...", ephemeral: true });
 
-      for (const u of users) {
-        const status = await addMemberToGuild(targetGuildId, u.user_id, u.access_token).catch(
-          () => 0
-        );
-        if (status === 201) ok++;
-        else if (status === 204) already++;
+      const verified = allUsers();
+      const guild = await bot.guilds.fetch(BASE_GUILD_ID);
+      const members = await guild.members.fetch({ withPresences: true });
+
+      const targetPresence = normalizePickToPresence(statusPick);
+
+      const selected = [];
+      for (const u of verified) {
+        const member = members.get(u.user_id);
+        const st = member?.presence?.status ?? "offline"; // [web:309]
+
+        if (statusPick !== "TODOS" && st !== targetPresence) continue;
+
+        selected.push(u);
+        if (selected.length >= limit) break;
+      }
+
+      await interaction.editReply({
+        content: `Migrando ${selected.length} usuários (${statusPick})...`,
+        ephemeral: true,
+      });
+
+      let ok = 0, already = 0, fail = 0;
+      for (const u of selected) {
+        const code = await addMemberToGuild(targetGuildId, u.user_id, u.access_token).catch(() => 0);
+        if (code === 201) ok++;
+        else if (code === 204) already++;
         else fail++;
       }
 
@@ -277,7 +394,7 @@ bot.on("interactionCreate", async (interaction) => {
     }
   } catch (e) {
     if (interaction.isRepliable()) {
-      return interaction.reply({ content: "Erro interno.", ephemeral: true }).catch(() => {});
+      return interaction.reply({ content: `Erro: ${String(e.message || e)}`, ephemeral: true }).catch(() => {});
     }
   }
 });
@@ -311,7 +428,7 @@ async function getMe(accessToken) {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!r.ok) throw new Error(`get_me_failed_${r.status}`);
-  return r.json(); // user resource [web:249]
+  return r.json(); // user [web:249]
 }
 
 app.get("/", (req, res) => res.status(200).send("OK"));
@@ -328,10 +445,9 @@ app.get("/oauth/callback", async (req, res) => {
     const token = await exchangeCodeForToken(code);
     const me = await getMe(token.access_token);
 
-    // CDN avatar url
     const avatarUrl = me.avatar
       ? `https://cdn.discordapp.com/avatars/${me.id}/${me.avatar}.png?size=256`
-      : `https://cdn.discordapp.com/embed/avatars/${Number(me.id) % 5}.png`; // fallback
+      : `https://cdn.discordapp.com/embed/avatars/${Number(me.id) % 5}.png`;
 
     upsertUser({
       user_id: me.id,
@@ -341,7 +457,6 @@ app.get("/oauth/callback", async (req, res) => {
       verified_at: Date.now(),
     });
 
-    // Dar cargo (usuário precisa estar no servidor base)
     try {
       const guild = await bot.guilds.fetch(BASE_GUILD_ID);
       const member = await guild.members.fetch(me.id);
