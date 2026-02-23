@@ -249,11 +249,10 @@ async function addMemberToGuild(targetGuildId, userId, userAccessToken) {
     },
     body: JSON.stringify({ access_token: userAccessToken }),
   });
-  return r.status; // 201 created, 204 already member [web:17]
+  return r.status; // 201 created, 204 already member
 }
 
 function normalizePickToPresence(statusPick) {
-  // PresenceStatus: online | idle | dnd | offline [web:309]
   if (statusPick === "ONLINE") return "online";
   if (statusPick === "AUSENTE") return "idle";
   if (statusPick === "OCUPADO") return "dnd";
@@ -273,23 +272,23 @@ bot.on("interactionCreate", async (interaction) => {
   try {
     if (!interaction.isChatInputCommand()) return;
 
-    // Dono-only para /migrar e /estatisticas
     if ((interaction.commandName === "migrar" || interaction.commandName === "estatisticas") && ownerOnly(interaction)) {
       return interaction.reply({ content: "Sem permissão.", ephemeral: true });
     }
 
-    // /setupverificar pode ficar para admins (e opcionalmente dono-only)
     if (interaction.commandName === "setupverificar") {
+      const guildIcon = interaction.guild?.iconURL?.({ extension: "png", size: 256 }) || null; // thumbnail direita [web:277]
+
       const embed = new EmbedBuilder()
         .setColor(0x22C55E)
         .setTitle("Verificação de Conta")
+        .setThumbnail(guildIcon)
         .setDescription(
           [
             "Para concluir sua verificação, clique no botão abaixo e autorize o acesso solicitado.",
             "",
             "**Após autorizar:**",
             "• Você receberá o cargo de verificado automaticamente.",
-            "• Seu acesso ficará liberado para migração quando o dono usar `/migrar`.",
             "",
             "_Se o cargo não aparecer em até 1 minuto, tente novamente ou contate um administrador._",
           ].join("\n")
@@ -303,11 +302,7 @@ bot.on("interactionCreate", async (interaction) => {
           .setURL(buildAuthorizeUrl())
       );
 
-      await interaction.channel.send({
-        embeds: [embed],
-        components: [row],
-      });
-
+      await interaction.channel.send({ embeds: [embed], components: [row] });
       return interaction.reply({ content: "Mensagem de verificação enviada.", ephemeral: true });
     }
 
@@ -318,14 +313,20 @@ bot.on("interactionCreate", async (interaction) => {
       const verifiedIds = new Set(verified.map((v) => v.user_id));
 
       const guild = await bot.guilds.fetch(BASE_GUILD_ID);
+
+      // Busca membros + presenças (se o intent estiver ligado) [web:334]
       const members = await guild.members.fetch({ withPresences: true });
 
-      let online = 0, idle = 0, dnd = 0, offline = 0;
+      let online = 0, idle = 0, dnd = 0, offline = 0, notInGuild = 0;
 
-      for (const [id, member] of members) {
-        if (!verifiedIds.has(id)) continue;
+      for (const id of verifiedIds) {
+        const member = members.get(id);
+        if (!member) {
+          notInGuild++;
+          continue;
+        }
 
-        const st = member.presence?.status ?? "offline";
+        const st = member.presence?.status ?? "offline"; // [web:309][web:314]
         if (st === "online") online++;
         else if (st === "idle") idle++;
         else if (st === "dnd") dnd++;
@@ -337,22 +338,26 @@ bot.on("interactionCreate", async (interaction) => {
         .setTitle("Estatísticas de Verificação")
         .setDescription(
           [
-            `**Total verificados:** ${verified.length}`,
+            `**Total verificados (no banco):** ${verified.length}`,
+            `**Verificados presentes no servidor base:** ${verified.length - notInGuild}`,
+            `**Verificados fora do servidor base:** ${notInGuild}`,
             "",
             `🟢 **Online:** ${online}`,
             `🟡 **Ausentes:** ${idle}`,
             `🔴 **Ocupados:** ${dnd}`,
             `⚫ **Offlines:** ${offline}`,
+            "",
+            "_Obs.: status pode não ser 100% preciso se o Discord não fornecer presença para algum membro._",
           ].join("\n")
         )
-        .setFooter({ text: "Dados do servidor base" });
+        .setFooter({ text: "Servidor base" });
 
       return interaction.editReply({ content: "", embeds: [embed] });
     }
 
     if (interaction.commandName === "migrar") {
       const targetGuildId = interaction.options.getString("servidor_id", true);
-      const statusPick = interaction.options.getString("status", true); // TODOS/ONLINE/AUSENTE/OCUPADO/OFFLINE
+      const statusPick = interaction.options.getString("status", true);
       const limit = interaction.options.getInteger("quantidade", true);
 
       await interaction.reply({ content: "Preparando lista...", ephemeral: true });
@@ -374,10 +379,7 @@ bot.on("interactionCreate", async (interaction) => {
         if (selected.length >= limit) break;
       }
 
-      await interaction.editReply({
-        content: `Migrando ${selected.length} usuários (${statusPick})...`,
-        ephemeral: true,
-      });
+      await interaction.editReply({ content: `Migrando ${selected.length} usuários (${statusPick})...`, ephemeral: true });
 
       let ok = 0, already = 0, fail = 0;
       for (const u of selected) {
@@ -420,7 +422,7 @@ async function exchangeCodeForToken(code) {
   });
 
   if (!r.ok) throw new Error(`token_exchange_failed_${r.status}`);
-  return r.json(); // OAuth2 token [web:2]
+  return r.json();
 }
 
 async function getMe(accessToken) {
@@ -428,7 +430,7 @@ async function getMe(accessToken) {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   if (!r.ok) throw new Error(`get_me_failed_${r.status}`);
-  return r.json(); // user [web:249]
+  return r.json();
 }
 
 app.get("/", (req, res) => res.status(200).send("OK"));
